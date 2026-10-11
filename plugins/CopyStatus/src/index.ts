@@ -1,72 +1,76 @@
-import { findByName, findByTypeName } from "@vendetta/metro";
+import { find } from "@vendetta/metro";
 import { ReactNative } from "@vendetta/metro/common";
 import { after, unpatchAll } from "@vendetta/patcher";
+import { showToast } from "@vendetta/ui/toasts";
 
-// Candidate component names Discord has used for the custom status bubble on
-// profiles. Every one that exists in the running client gets patched.
-const CANDIDATES = [
-  "UserProfileCustomStatus",
-  "CustomStatusBubble",
-  "ProfileCustomStatus",
-  "CustomStatus",
-  "UserProfileStatus",
-  "StatusBubble",
-  "ProfileBubble",
-];
+// Discord's mobile client doesn't expose a stable name for the profile status
+// bubble, so instead of guessing one name we scan every loaded module for
+// components whose name looks status-related and patch all of them.
+const NAME_RE = /custom.?status|status.?bubble|profile.?bubble|user.?status|profile.?status/i;
 
-function makeSelectable(node: any): void {
-  if (!node || typeof node !== "object") return;
+function makeSelectable(node: any, depth = 0): void {
+  if (!node || typeof node !== "object" || depth > 40) return;
 
-  if (node.type === ReactNative.Text) {
+  if (node.type === ReactNative.Text && node.props) {
     node.props.selectable = true;
-
-    // A Text without onPress ignores long-press selection in some parents.
-    if (typeof node.props.onPress !== "function") {
-      node.props.onPress = () => {};
-    }
+    if (typeof node.props.onPress !== "function") node.props.onPress = () => {};
   }
 
   const children = node.props?.children;
   if (Array.isArray(children)) {
-    for (const child of children) makeSelectable(child);
+    for (const child of children) makeSelectable(child, depth + 1);
   } else if (children && typeof children === "object") {
-    makeSelectable(children);
+    makeSelectable(children, depth + 1);
   }
 }
 
 function patchResult(_: any, res: any) {
-  if (!res?.props) return res;
-  makeSelectable(res);
+  if (res?.props) makeSelectable(res);
   return res;
 }
 
-function tryPatch(target: any): boolean {
-  if (!target) return false;
+const seen = new Set<any>();
+const patchedNames: string[] = [];
+
+function tryPatch(mod: any, name: string) {
+  if (!mod || seen.has(mod)) return;
+  seen.add(mod);
   try {
-    if (typeof target.default === "function") {
-      after("default", target, patchResult);
-      return true;
-    }
-    // memo()/forwardRef() components expose the render function as `type`
-    if (typeof target.type === "function") {
-      after("type", target, patchResult);
-      return true;
+    if (typeof mod.default === "function" && NAME_RE.test(mod.default.name ?? name)) {
+      after("default", mod, patchResult);
+      patchedNames.push(mod.default.name || name);
+    } else if (typeof mod.type === "function") {
+      after("type", mod, patchResult);
+      patchedNames.push(name);
     }
   } catch (e) {
-    console.error("[CopyStatus] patch failed", e);
+    console.error("[CopyStatus] patch failed for", name, e);
   }
-  return false;
 }
 
-const patched = new Set<string>();
-
-for (const name of CANDIDATES) {
-  const found = findByName(name, false) ?? findByTypeName(name);
-  if (tryPatch(found)) patched.add(name);
+try {
+  // `find` walks every module; returning false keeps it walking.
+  find((m: any) => {
+    try {
+      if (!m || (typeof m !== "object" && typeof m !== "function")) return false;
+      const name: string | undefined =
+        m.default?.displayName ?? m.default?.name ?? m.displayName ?? m.name;
+      if (typeof name === "string" && NAME_RE.test(name)) {
+        tryPatch(m.default ? m : { default: m }, name);
+      }
+    } catch {}
+    return false;
+  });
+} catch (e) {
+  console.error("[CopyStatus] scan failed", e);
 }
 
-console.log(
-  `[CopyStatus] patched: ${patched.size ? [...patched].join(", ") : "nothing (no matching component found)"}`
-);
+const summary = patchedNames.length
+  ? `CopyStatus patched: ${[...new Set(patchedNames)].join(", ")}`
+  : "CopyStatus: no status component found";
+console.log(`[CopyStatus] ${summary}`);
+try {
+  showToast(summary);
+} catch {}
 
 export const onUnload = () => unpatchAll();
