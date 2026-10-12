@@ -8,8 +8,6 @@ Discord doesn't let you select the custom status bubble on a profile. CopyStatus
 
 The plugin keeps track of the custom status texts Discord already has loaded (from presence data). Whenever a piece of text on screen exactly matches one of them, it is made selectable. It doesn't depend on any one Discord component name, so it should survive most Discord updates.
 
-When the plugin loads it shows a short toast such as `CopyStatus ready via jsx+createElement (N statuses known)`.
-
 ## Install
 
 Paste this URL into your Discord client's Plugins page:
