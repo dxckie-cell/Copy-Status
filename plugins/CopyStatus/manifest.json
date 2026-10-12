@@ -1,9 +1,9 @@
 {
   "name": "CopyStatus",
-  "description": "Select and copy custom status text on profiles",
+  "description": "Long-press a user's custom status on their profile to select and copy the text, just like CopyBios does for bios.",
   "authors": [
     {
-      "name": "vietanh5982"
+      "name": "dxckie cell"
     }
   ],
   "main": "src/index.ts",
