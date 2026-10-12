@@ -1,5 +1,5 @@
-import { findByStoreName } from "@vendetta/metro";
-import { ReactNative, FluxDispatcher } from "@vendetta/metro/common";
+import { findByProps, findByStoreName } from "@vendetta/metro";
+import { React, FluxDispatcher } from "@vendetta/metro/common";
 import { before, unpatchAll } from "@vendetta/patcher";
 import { showToast } from "@vendetta/ui/toasts";
 
@@ -54,34 +54,55 @@ scan();
 FluxDispatcher?.subscribe?.("PRESENCE_UPDATES", onPresence);
 const timer = setInterval(scan, 4000);
 
-const Text: any = ReactNative.Text;
-let patched = false;
+// RN's <Text> is a plain function component on this Discord build (no `.render`
+// to patch), so hook element creation instead: whenever an element is created
+// whose text content is a known custom status, flag it selectable.
+function tweak(props: any) {
+  if (!props || props.selectable || !isStatusText(props.children)) return null;
+  return {
+    ...props,
+    selectable: true,
+    onPress: typeof props.onPress === "function" ? props.onPress : () => {},
+  };
+}
+
+const hooked: string[] = [];
+
 try {
-  if (Text && typeof Text.render === "function") {
-    before("render", Text, ([props, ref]: any[]) => {
-      if (!props || props.selectable) return;
-      if (isStatusText(props.children)) {
-        return [
-          {
-            ...props,
-            selectable: true,
-            onPress: typeof props.onPress === "function" ? props.onPress : () => {},
-          },
-          ref,
-        ];
-      }
-    });
-    patched = true;
+  const jsxRuntime: any = findByProps("jsx", "jsxs");
+  if (jsxRuntime) {
+    for (const fn of ["jsx", "jsxs"]) {
+      if (typeof jsxRuntime[fn] !== "function") continue;
+      before(fn, jsxRuntime, (args: any[]) => {
+        const next = tweak(args[1]);
+        if (next) return [args[0], next, ...args.slice(2)];
+      });
+    }
+    hooked.push("jsx");
   }
 } catch (e) {
-  console.error("[CopyStatus] patch failed", e);
+  console.error("[CopyStatus] jsx hook failed", e);
 }
+
+try {
+  if (React && typeof React.createElement === "function") {
+    before("createElement", React, (args: any[]) => {
+      const next = tweak(args[1]);
+      if (next) return [args[0], next, ...args.slice(2)];
+    });
+    hooked.push("createElement");
+  }
+} catch (e) {
+  console.error("[CopyStatus] createElement hook failed", e);
+}
+
+const patched = hooked.length > 0;
 
 const msg = !PresenceStore
   ? "CopyStatus: PresenceStore not found"
   : !patched
-    ? "CopyStatus: couldn't hook Text"
-    : `CopyStatus ready (${statuses.size} statuses known)`;
+    ? "CopyStatus: couldn't hook rendering"
+    : `CopyStatus ready via ${hooked.join("+")} (${statuses.size} statuses known)`;
 console.log(`[CopyStatus] ${msg}`);
 try {
   showToast(msg);
